@@ -16,6 +16,8 @@ pub struct InputState {
     pub sprint: bool,
     pub jump_held: bool,
     pub jump_pressed: bool,
+    pub mouse_primary: bool,
+    pub mouse_secondary: bool,
     pub mouse_delta: Vec2,
     pub cursor_captured: bool,
     pub last_cursor_position: Option<PhysicalPosition<f64>>,
@@ -42,6 +44,15 @@ impl InputState {
         }
     }
 
+    pub fn handle_mouse(&mut self, button: winit::event::MouseButton, state: ElementState) {
+        let pressed = state == ElementState::Pressed;
+        match button {
+            winit::event::MouseButton::Left => self.mouse_primary = pressed,
+            winit::event::MouseButton::Right => self.mouse_secondary = pressed,
+            _ => {}
+        }
+    }
+
     pub fn to_player_input(&self, mouse_sensitivity: f32) -> PlayerInput {
         PlayerInput {
             move_forward: axis(self.forward, self.back),
@@ -49,6 +60,8 @@ impl InputState {
             look_delta: self.mouse_delta * mouse_sensitivity,
             jump_pressed: self.jump_pressed,
             sprint_held: self.sprint,
+            action_primary: self.mouse_primary,
+            action_secondary: self.mouse_secondary,
         }
     }
 
@@ -56,6 +69,8 @@ impl InputState {
         self.mouse_delta = Vec2::ZERO;
         self.jump_pressed = false;
         self.received_raw_mouse = false;
+        self.mouse_primary = false;
+        self.mouse_secondary = false;
     }
 
     pub fn clear_focus_state(&mut self) {
@@ -66,6 +81,8 @@ impl InputState {
         self.sprint = false;
         self.jump_held = false;
         self.jump_pressed = false;
+        self.mouse_primary = false;
+        self.mouse_secondary = false;
         self.mouse_delta = Vec2::ZERO;
         self.cursor_captured = false;
         self.last_cursor_position = None;

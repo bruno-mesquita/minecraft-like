@@ -119,6 +119,52 @@ impl World {
         }
     }
 
+    pub fn set_block(&mut self, coord: BlockCoord, block_id: crate::voxel::BlockId) {
+        if !(0..self.config.vertical_height).contains(&coord.y) {
+            return;
+        }
+
+        let chunk_coord = ChunkCoord::from_block(coord);
+        let Some(chunk) = self.loaded_chunks.get_mut(&chunk_coord) else {
+            return;
+        };
+
+        let origin = chunk_coord.world_origin();
+        let lx = coord.x - origin.x;
+        let ly = coord.y;
+        let lz = coord.z - origin.z;
+
+        if chunk.storage.get(lx, ly, lz) == block_id {
+            return;
+        }
+
+        chunk.storage.set(lx, ly, lz, block_id);
+        chunk.dirty = true;
+        self.manager.mark_meshing(chunk_coord);
+
+        // Dirty neighbors if on boundary
+        if lx == 0 {
+            self.dirty_chunk(ChunkCoord::new(chunk_coord.x - 1, chunk_coord.z));
+        }
+        if lx == voxel_core::CHUNK_SIZE_X - 1 {
+            self.dirty_chunk(ChunkCoord::new(chunk_coord.x + 1, chunk_coord.z));
+        }
+        if lz == 0 {
+            self.dirty_chunk(ChunkCoord::new(chunk_coord.x, chunk_coord.z - 1));
+        }
+        if lz == voxel_core::CHUNK_SIZE_Z - 1 {
+            self.dirty_chunk(ChunkCoord::new(chunk_coord.x, chunk_coord.z + 1));
+        }
+    }
+
+    fn dirty_chunk(&mut self, coord: ChunkCoord) {
+        if self.loaded_chunks.contains_key(&coord) {
+            // We don't set chunk.dirty = true here because voxel data didn't change (no need to save to disk)
+            // but we do need to remesh it.
+            self.manager.mark_meshing(coord);
+        }
+    }
+
     pub fn sample_block(&self, block: BlockCoord) -> crate::voxel::Voxel {
         if !(0..self.config.vertical_height).contains(&block.y) {
             return crate::voxel::Voxel::new(AIR);

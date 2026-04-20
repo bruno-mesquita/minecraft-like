@@ -78,6 +78,9 @@ impl Engine {
         let mut steps = 0;
         let mut frame_input = input.to_player_input(self.config.render.mouse_sensitivity);
 
+        // Process interactions once per frame (or we could do it in the loop if we want more precision)
+        self.handle_interactions(frame_input);
+
         while self.accumulator >= fixed_dt && steps < MAX_SIMULATION_STEPS_PER_FRAME {
             self.simulation
                 .tick(&self.world, frame_input, &self.config.simulation, fixed_dt);
@@ -86,6 +89,9 @@ impl Engine {
             steps += 1;
             frame_input.look_delta = glam::Vec2::ZERO;
             frame_input.jump_pressed = false;
+            // Only handle actions on the first step to avoid repeating if lag occurs
+            frame_input.action_primary = false;
+            frame_input.action_secondary = false;
         }
 
         if self.accumulator >= fixed_dt {
@@ -101,6 +107,36 @@ impl Engine {
         let camera = self.current_camera();
         self.renderer.sync_world(&mut self.world, &camera, &mut self.metrics);
         self.renderer.render(&camera)
+    }
+
+    fn handle_interactions(&mut self, input: PlayerInput) {
+        if !input.action_primary && !input.action_secondary {
+            return;
+        }
+
+        let camera_transform = self.simulation.camera_transform(&self.config.simulation);
+        let ray_origin = camera_transform.position;
+        let ray_dir = camera_transform.forward;
+
+        if let Some(hit) = voxel_sim::raycast(&self.world, ray_origin, ray_dir, 5.0) {
+            if input.action_primary {
+                self.world.set_block(hit.coord, voxel_world::AIR);
+            } else if input.action_secondary {
+                let place_coord = BlockCoord::new(
+                    hit.coord.x + hit.normal.x,
+                    hit.coord.y + hit.normal.y,
+                    hit.coord.z + hit.normal.z,
+                );
+
+                // Check if the new block would intersect the player
+                let player_pos = self.simulation.player.position;
+                let player_collider = self.simulation.player.collider;
+                if !intersects_aabb(place_coord, player_pos, player_collider) {
+                    // For now, let's just place STONE
+                    self.world.set_block(place_coord, voxel_world::STONE);
+                }
+            }
+        }
     }
 
     fn tick_world(&mut self) {
@@ -135,4 +171,16 @@ fn spawn_position_from_surface(surface: BlockCoord) -> glam::Vec3 {
         surface.y as f32 + 1.0 + collider_half_height,
         surface.z as f32 + 0.5,
     )
+}
+
+fn intersects_aabb(block: BlockCoord, pos: glam::Vec3, collider: voxel_sim::Aabb) -> bool {
+    let min = pos - collider.half_extents;
+    let max = pos + collider.half_extents;
+
+    let block_min = glam::Vec3::new(block.x as f32, block.y as f32, block.z as f32);
+    let block_max = block_min + glam::Vec3::ONE;
+
+    min.x < block_max.x && max.x > block_min.x &&
+    min.y < block_max.y && max.y > block_min.y &&
+    min.z < block_max.z && max.z > block_min.z
 }

@@ -10,6 +10,8 @@ pub struct PlayerInput {
     pub look_delta: glam::Vec2,
     pub jump_pressed: bool,
     pub sprint_held: bool,
+    pub action_primary: bool,
+    pub action_secondary: bool,
 }
 
 impl PlayerInput {

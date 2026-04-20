@@ -272,7 +272,10 @@ impl Renderer {
                 continue;
             }
 
-            if self.chunk_meshes.contains_key(coord) {
+            let is_meshing = world.manager.state(*coord) == Some(voxel_world::ChunkState::Meshing);
+            let not_in_gpu = !self.chunk_meshes.contains_key(coord);
+
+            if !is_meshing && !not_in_gpu {
                 continue;
             }
 
@@ -291,8 +294,10 @@ impl Renderer {
             let upload_started = Instant::now();
             if let Some(gpu_mesh) = GpuChunkMesh::from_chunk_mesh(&self.device, &mesh) {
                 self.chunk_meshes.insert(coord, gpu_mesh);
-                world.mark_chunk_resident(coord);
+            } else {
+                self.chunk_meshes.remove(&coord);
             }
+            world.mark_chunk_resident(coord);
             metrics.record_phase(WorkPhase::Upload, upload_started.elapsed());
         }
 

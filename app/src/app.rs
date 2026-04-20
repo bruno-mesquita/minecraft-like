@@ -105,9 +105,11 @@ impl ApplicationHandler for App {
                     self.input.cursor_captured = super::input::capture_cursor(window, true);
                 }
             }
-            WindowEvent::MouseInput { state: ElementState::Pressed, .. } => {
+            WindowEvent::MouseInput { button, state, .. } => {
                 if !self.input.cursor_captured {
                     self.input.cursor_captured = super::input::capture_cursor(window, true);
+                } else {
+                    self.input.handle_mouse(button, state);
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
