@@ -100,13 +100,18 @@ impl ApplicationHandler for App {
                     engine.resize(size);
                 }
             }
+            WindowEvent::CursorEntered { .. } => {
+                if !self.input.cursor_captured {
+                    self.input.cursor_captured = super::input::capture_cursor(window, true);
+                }
+            }
             WindowEvent::MouseInput { state: ElementState::Pressed, .. } => {
                 if !self.input.cursor_captured {
                     self.input.cursor_captured = super::input::capture_cursor(window, true);
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                self.input.handle_cursor_moved(position);
+                self.input.handle_cursor_moved(window, position);
             }
             WindowEvent::Focused(false) => {
                 self.input.clear_focus_state();

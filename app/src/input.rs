@@ -72,9 +72,24 @@ impl InputState {
         self.received_raw_mouse = false;
     }
 
-    pub fn handle_cursor_moved(&mut self, position: PhysicalPosition<f64>) {
+    pub fn handle_cursor_moved(&mut self, window: &Window, position: PhysicalPosition<f64>) {
         let previous = self.last_cursor_position.replace(position);
-        if !self.cursor_captured || self.received_raw_mouse {
+        if !self.cursor_captured {
+            return;
+        }
+
+        // Always try to keep it centered to prevent escaping the window
+        let size = window.inner_size();
+        let center = PhysicalPosition::new(
+            f64::from(size.width.max(1)) / 2.0,
+            f64::from(size.height.max(1)) / 2.0,
+        );
+
+        if (position.x - center.x).abs() > 10.0 || (position.y - center.y).abs() > 10.0 {
+            let _ = window.set_cursor_position(center);
+        }
+
+        if self.received_raw_mouse {
             return;
         }
 
@@ -99,13 +114,13 @@ pub fn capture_cursor(window: &Window, capture: bool) -> bool {
         window.set_cursor_visible(false);
 
         let grab_mode = window
-            .set_cursor_grab(CursorGrabMode::Confined)
-            .map(|_| CursorGrabMode::Confined)
-            .or_else(|confined_error| {
-                tracing::debug!(%confined_error, "confined cursor grab failed, trying locked");
+            .set_cursor_grab(CursorGrabMode::Locked)
+            .map(|_| CursorGrabMode::Locked)
+            .or_else(|locked_error| {
+                tracing::debug!(%locked_error, "locked cursor grab failed, trying confined");
                 window
-                    .set_cursor_grab(CursorGrabMode::Locked)
-                    .map(|_| CursorGrabMode::Locked)
+                    .set_cursor_grab(CursorGrabMode::Confined)
+                    .map(|_| CursorGrabMode::Confined)
             });
 
         use winit::dpi::LogicalPosition;
