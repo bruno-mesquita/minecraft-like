@@ -383,6 +383,8 @@ fn spawn_position_from_surface(surface: BlockCoord) -> Vec3 {
 
 fn capture_cursor(window: &Window, capture: bool) -> bool {
     if capture {
+        window.set_cursor_visible(false);
+
         let grab_mode = window
             .set_cursor_grab(CursorGrabMode::Confined)
             .map(|_| CursorGrabMode::Confined)
@@ -395,7 +397,6 @@ fn capture_cursor(window: &Window, capture: bool) -> bool {
 
         match grab_mode {
             Ok(mode) => {
-                window.set_cursor_visible(false);
                 let size = window.inner_size();
                 let center = LogicalPosition::new(
                     f64::from(size.width.max(1)) / 2.0,
@@ -409,7 +410,6 @@ fn capture_cursor(window: &Window, capture: bool) -> bool {
             }
             Err(error) => {
                 warn!(%error, "failed to capture cursor");
-                window.set_cursor_visible(true);
                 false
             }
         }
