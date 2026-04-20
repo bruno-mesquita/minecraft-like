@@ -11,6 +11,7 @@ use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
 const SHADER: &str = include_str!("shader.wgsl");
+const CROSSHAIR_SHADER: &str = include_str!("crosshair.wgsl");
 
 #[derive(Debug)]
 pub struct Renderer {
@@ -19,6 +20,7 @@ pub struct Renderer {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     pipeline: wgpu::RenderPipeline,
+    crosshair_pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     depth_view: wgpu::TextureView,
@@ -176,6 +178,57 @@ impl Renderer {
             cache: None,
         });
 
+        let crosshair_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("crosshair-shader"),
+            source: wgpu::ShaderSource::Wgsl(CROSSHAIR_SHADER.into()),
+        });
+
+        let crosshair_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("crosshair-pipeline-layout"),
+            bind_group_layouts: &[],
+            push_constant_ranges: &[],
+        });
+
+        let crosshair_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("crosshair-pipeline"),
+            layout: Some(&crosshair_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &crosshair_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &crosshair_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         let depth_view = create_depth_view(&device, &config);
 
         Ok(Self {
@@ -184,6 +237,7 @@ impl Renderer {
             queue,
             config,
             pipeline,
+            crosshair_pipeline,
             camera_buffer,
             camera_bind_group,
             depth_view,
@@ -297,6 +351,9 @@ impl Renderer {
                 pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);
             }
+
+            pass.set_pipeline(&self.crosshair_pipeline);
+            pass.draw(0..12, 0..1);
         }
 
         self.queue.submit(Some(encoder.finish()));
