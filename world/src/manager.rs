@@ -1,4 +1,9 @@
-use crate::{chunk::Chunk, generator::TerrainGenerator, region::RegionStore, AIR};
+use crate::chunk::Chunk;
+use crate::generator::TerrainGenerator;
+use crate::region::RegionStore;
+use crate::state::ChunkState;
+use crate::visibility::nearest_visible_coords;
+use crate::voxel::AIR;
 use rustc_hash::FxHashMap;
 use std::{collections::VecDeque, io, time::Instant};
 use tracing::debug;
@@ -6,86 +11,6 @@ use voxel_core::{
     BlockCoord, ChunkCoord, FrameBudget, FrameMetrics, StreamingConfig, WorkPhase, WorldConfig,
     WorldCounters,
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChunkState {
-    Requested,
-    Generating,
-    Meshing,
-    Resident,
-    Evicting,
-}
-
-#[derive(Debug)]
-pub struct ChunkManager {
-    states: FxHashMap<ChunkCoord, ChunkState>,
-    requested: VecDeque<ChunkCoord>,
-    pending_mesh: VecDeque<ChunkCoord>,
-}
-
-impl ChunkManager {
-    pub fn new() -> Self {
-        Self {
-            states: FxHashMap::default(),
-            requested: VecDeque::new(),
-            pending_mesh: VecDeque::new(),
-        }
-    }
-
-    pub fn request(&mut self, coord: ChunkCoord) {
-        if self.states.contains_key(&coord) {
-            return;
-        }
-
-        self.states.insert(coord, ChunkState::Requested);
-        self.requested.push_back(coord);
-    }
-
-    pub fn mark_generating(&mut self, coord: ChunkCoord) {
-        self.states.insert(coord, ChunkState::Generating);
-    }
-
-    pub fn mark_meshing(&mut self, coord: ChunkCoord) {
-        self.states.insert(coord, ChunkState::Meshing);
-        self.pending_mesh.push_back(coord);
-    }
-
-    pub fn mark_resident(&mut self, coord: ChunkCoord) {
-        self.states.insert(coord, ChunkState::Resident);
-    }
-
-    pub fn mark_evicting(&mut self, coord: ChunkCoord) {
-        self.states.insert(coord, ChunkState::Evicting);
-    }
-
-    pub fn pop_requested(&mut self) -> Option<ChunkCoord> {
-        self.requested.pop_front()
-    }
-
-    pub fn counters(&self) -> WorldCounters {
-        let mut counters = WorldCounters::default();
-
-        for state in self.states.values() {
-            match state {
-                ChunkState::Requested => counters.requested += 1,
-                ChunkState::Generating => counters.generating += 1,
-                ChunkState::Meshing => counters.meshing += 1,
-                ChunkState::Resident => counters.resident += 1,
-                ChunkState::Evicting => counters.evicting += 1,
-            }
-        }
-
-        counters
-    }
-
-    pub fn has_state(&self, coord: ChunkCoord, expected: ChunkState) -> bool {
-        self.states.get(&coord).copied() == Some(expected)
-    }
-
-    pub fn state(&self, coord: ChunkCoord) -> Option<ChunkState> {
-        self.states.get(&coord).copied()
-    }
-}
 
 #[derive(Debug)]
 pub struct World {
@@ -238,91 +163,73 @@ impl World {
     }
 }
 
-fn nearest_visible_coords(center: ChunkCoord, radius: i32, max_chunks: usize) -> Vec<ChunkCoord> {
-    let distance_sq_limit = radius * radius;
-    let mut coords = Vec::new();
+#[derive(Debug)]
+pub struct ChunkManager {
+    states: FxHashMap<ChunkCoord, ChunkState>,
+    requested: VecDeque<ChunkCoord>,
+    pending_mesh: VecDeque<ChunkCoord>,
+}
 
-    for z in -radius..=radius {
-        for x in -radius..=radius {
-            let coord = ChunkCoord::new(center.x + x, center.z + z);
-            let distance_sq = center.distance_squared(coord);
-            if distance_sq <= distance_sq_limit {
-                coords.push((distance_sq, coord));
-            }
+impl ChunkManager {
+    pub fn new() -> Self {
+        Self {
+            states: FxHashMap::default(),
+            requested: VecDeque::new(),
+            pending_mesh: VecDeque::new(),
         }
     }
 
-    coords.sort_unstable_by_key(|&(distance_sq, coord)| (distance_sq, coord.x, coord.z));
-    coords
-        .into_iter()
-        .take(max_chunks)
-        .map(|(_, coord)| coord)
-        .collect()
-}
+    pub fn request(&mut self, coord: ChunkCoord) {
+        if self.states.contains_key(&coord) {
+            return;
+        }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn temp_save_dir(name: &str) -> std::path::PathBuf {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be after unix epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!("minecraft-world-tests-{name}-{stamp}"))
+        self.states.insert(coord, ChunkState::Requested);
+        self.requested.push_back(coord);
     }
 
-    #[test]
-    fn generation_is_deterministic_for_same_seed() {
-        let world_a = World::new(
-            WorldConfig::default(),
-            StreamingConfig::default(),
-            42,
-            temp_save_dir("a"),
-        );
-        let world_b = World::new(
-            WorldConfig::default(),
-            StreamingConfig::default(),
-            42,
-            temp_save_dir("b"),
-        );
-
-        let chunk_a = world_a.generator.generate_chunk(ChunkCoord::new(2, -4));
-        let chunk_b = world_b.generator.generate_chunk(ChunkCoord::new(2, -4));
-        assert_eq!(chunk_a.storage.as_slice(), chunk_b.storage.as_slice());
+    pub fn mark_generating(&mut self, coord: ChunkCoord) {
+        self.states.insert(coord, ChunkState::Generating);
     }
 
-    #[test]
-    fn save_roundtrip_restores_chunk() {
-        let dir = temp_save_dir("save");
-        let mut world = World::new(WorldConfig::default(), StreamingConfig::default(), 7, &dir);
-        let coord = ChunkCoord::new(0, 0);
-        let mut metrics = FrameMetrics::default();
-
-        world.manager.request(coord);
-        world.pump_generation(&mut metrics);
-        let chunk = world
-            .loaded_chunks
-            .get_mut(&coord)
-            .expect("chunk should be generated");
-        chunk.storage.set(0, 10, 0, crate::STONE);
-        chunk.dirty = true;
-        world.save_dirty_chunks(&mut metrics).expect("save should work");
-
-        let reloaded = world
-            .store
-            .load_chunk(coord)
-            .expect("load should work")
-            .expect("chunk should exist on disk");
-        assert_eq!(reloaded.storage.get(0, 10, 0), crate::STONE);
+    pub fn mark_meshing(&mut self, coord: ChunkCoord) {
+        self.states.insert(coord, ChunkState::Meshing);
+        self.pending_mesh.push_back(coord);
     }
 
-    #[test]
-    fn visible_chunk_requests_are_capped() {
-        let coords = nearest_visible_coords(ChunkCoord::new(0, 0), 3, 16);
+    pub fn mark_resident(&mut self, coord: ChunkCoord) {
+        self.states.insert(coord, ChunkState::Resident);
+    }
 
-        assert_eq!(coords.len(), 16);
-        assert_eq!(coords[0], ChunkCoord::new(0, 0));
+    pub fn mark_evicting(&mut self, coord: ChunkCoord) {
+        self.states.insert(coord, ChunkState::Evicting);
+    }
+
+    pub fn pop_requested(&mut self) -> Option<ChunkCoord> {
+        self.requested.pop_front()
+    }
+
+    pub fn counters(&self) -> WorldCounters {
+        let mut counters = WorldCounters::default();
+
+        for state in self.states.values() {
+            match state {
+                ChunkState::Requested => counters.requested += 1,
+                ChunkState::Generating => counters.generating += 1,
+                ChunkState::Meshing => counters.meshing += 1,
+                ChunkState::Resident => counters.resident += 1,
+                ChunkState::Evicting => counters.evicting += 1,
+            }
+        }
+
+        counters
+    }
+
+    pub fn has_state(&self, coord: ChunkCoord, expected: ChunkState) -> bool {
+        self.states.get(&coord).copied() == Some(expected)
+    }
+
+    pub fn state(&self, coord: ChunkCoord) -> Option<ChunkState> {
+        self.states.get(&coord).copied()
     }
 }
