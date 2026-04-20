@@ -1,0 +1,39 @@
+[workspace]
+members = ["app", "core", "render", "sim", "world"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+authors = ["Bruno Mesquita"]
+
+[workspace.dependencies]
+ahash = "0.8"
+bincode = "1"
+bitvec = "1"
+bytemuck = { version = "1", features = ["derive"] }
+glam = { version = "0.30", features = ["serde"] }
+hecs = "0.10"
+lz4_flex = "0.11"
+noise = "0.9"
+parking_lot = "0.12"
+pollster = "0.4"
+profiling = "1"
+rayon = "1"
+rustc-hash = "2"
+serde = { version = "1", features = ["derive"] }
+smallvec = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracy-client = "0.18"
+wgpu = "25"
+winit = "0.30"
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"

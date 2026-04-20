@@ -1,0 +1,11 @@
+[package]
+name = "voxel-sim"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+glam.workspace = true
+hecs.workspace = true
+serde.workspace = true
+voxel-core = { path = "../core" }
+voxel-world = { path = "../world" }

@@ -1,0 +1,17 @@
+[package]
+name = "app"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+glam.workspace = true
+parking_lot.workspace = true
+pollster.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+voxel-core = { path = "../core" }
+voxel-render = { path = "../render" }
+voxel-sim = { path = "../sim" }
+voxel-world = { path = "../world" }
+wgpu.workspace = true
+winit.workspace = true
