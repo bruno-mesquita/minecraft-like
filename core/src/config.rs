@@ -42,6 +42,7 @@ impl Default for WorldConfig {
 pub struct StreamingConfig {
     pub load_radius: i32,
     pub keep_radius: i32,
+    pub max_active_chunks: usize,
     pub max_generation_jobs_per_frame: usize,
     pub max_mesh_jobs_per_frame: usize,
 }
@@ -49,8 +50,9 @@ pub struct StreamingConfig {
 impl Default for StreamingConfig {
     fn default() -> Self {
         Self {
-            load_radius: 10,
-            keep_radius: 12,
+            load_radius: 3,
+            keep_radius: 4,
+            max_active_chunks: 16,
             max_generation_jobs_per_frame: 4,
             max_mesh_jobs_per_frame: 3,
         }

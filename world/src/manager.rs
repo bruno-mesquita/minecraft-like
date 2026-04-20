@@ -115,15 +115,8 @@ impl World {
     }
 
     pub fn request_visible_chunks(&mut self, center: ChunkCoord) {
-        let load_distance_sq = self.streaming.load_radius * self.streaming.load_radius;
-
-        for z in -self.streaming.load_radius..=self.streaming.load_radius {
-            for x in -self.streaming.load_radius..=self.streaming.load_radius {
-                let coord = ChunkCoord::new(center.x + x, center.z + z);
-                if center.distance_squared(coord) <= load_distance_sq {
-                    self.manager.request(coord);
-                }
-            }
+        for coord in nearest_visible_coords(center, self.streaming.load_radius, self.streaming.max_active_chunks) {
+            self.manager.request(coord);
         }
     }
 
@@ -168,11 +161,31 @@ impl World {
 
     pub fn evict_far_chunks(&mut self, center: ChunkCoord) {
         let keep_distance_sq = self.streaming.keep_radius * self.streaming.keep_radius;
+        let mut nearest_loaded: Vec<_> = self
+            .loaded_chunks
+            .keys()
+            .copied()
+            .map(|coord| (center.distance_squared(coord), coord))
+            .collect();
+        nearest_loaded.sort_unstable_by_key(|&(distance_sq, coord)| (distance_sq, coord.x, coord.z));
+
+        let keep_by_count: FxHashMap<_, _> = nearest_loaded
+            .iter()
+            .take(self.streaming.max_active_chunks)
+            .map(|&(_, coord)| (coord, ()))
+            .collect();
+
         let to_evict: Vec<_> = self
             .loaded_chunks
             .keys()
             .copied()
             .filter(|coord| center.distance_squared(*coord) > keep_distance_sq)
+            .chain(
+                self.loaded_chunks
+                    .keys()
+                    .copied()
+                    .filter(|coord| !keep_by_count.contains_key(coord)),
+            )
             .collect();
 
         for coord in to_evict {
@@ -223,6 +236,28 @@ impl World {
         metrics.record_phase(WorkPhase::Save, started.elapsed());
         Ok(saved)
     }
+}
+
+fn nearest_visible_coords(center: ChunkCoord, radius: i32, max_chunks: usize) -> Vec<ChunkCoord> {
+    let distance_sq_limit = radius * radius;
+    let mut coords = Vec::new();
+
+    for z in -radius..=radius {
+        for x in -radius..=radius {
+            let coord = ChunkCoord::new(center.x + x, center.z + z);
+            let distance_sq = center.distance_squared(coord);
+            if distance_sq <= distance_sq_limit {
+                coords.push((distance_sq, coord));
+            }
+        }
+    }
+
+    coords.sort_unstable_by_key(|&(distance_sq, coord)| (distance_sq, coord.x, coord.z));
+    coords
+        .into_iter()
+        .take(max_chunks)
+        .map(|(_, coord)| coord)
+        .collect()
 }
 
 #[cfg(test)]
@@ -281,5 +316,13 @@ mod tests {
             .expect("load should work")
             .expect("chunk should exist on disk");
         assert_eq!(reloaded.storage.get(0, 10, 0), crate::STONE);
+    }
+
+    #[test]
+    fn visible_chunk_requests_are_capped() {
+        let coords = nearest_visible_coords(ChunkCoord::new(0, 0), 3, 16);
+
+        assert_eq!(coords.len(), 16);
+        assert_eq!(coords[0], ChunkCoord::new(0, 0));
     }
 }

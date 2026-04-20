@@ -45,7 +45,7 @@ impl Default for PlayerController {
 
 impl PlayerController {
     pub fn tick(&mut self, world: &World, input: PlayerInput, config: &SimulationConfig, dt_seconds: f32) {
-        self.yaw -= input.look_delta.x;
+        self.yaw += input.look_delta.x;
         self.pitch = (self.pitch - input.look_delta.y).clamp(-1.54, 1.54);
 
         self.grounded = intersects_solid(world, self.position + Vec3::new(0.0, -0.05, 0.0), self.collider);
@@ -247,7 +247,38 @@ mod tests {
             1.0 / 120.0,
         );
 
-        assert!(player.yaw < 0.0);
+        assert!(player.yaw > 0.0);
         assert!(player.pitch > 0.0);
+    }
+
+    #[test]
+    fn strafe_input_uses_player_right_vector() {
+        let world = VoxelWorld::new(WorldConfig::default(), StreamingConfig::default(), 1, temp_save_dir());
+        let config = SimulationConfig::default();
+        let mut player = PlayerController::default();
+
+        player.tick(
+            &world,
+            PlayerInput {
+                move_right: 1.0,
+                ..PlayerInput::default()
+            },
+            &config,
+            0.1,
+        );
+        assert!(player.position.x > 0.0);
+
+        player.position = Vec3::ZERO;
+        player.velocity = Vec3::ZERO;
+        player.tick(
+            &world,
+            PlayerInput {
+                move_right: -1.0,
+                ..PlayerInput::default()
+            },
+            &config,
+            0.1,
+        );
+        assert!(player.position.x < 0.0);
     }
 }
