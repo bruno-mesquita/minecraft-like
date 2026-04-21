@@ -22,6 +22,7 @@ pub struct InputState {
     pub cursor_captured: bool,
     pub last_cursor_position: Option<PhysicalPosition<f64>>,
     pub received_raw_mouse: bool,
+    pub select_slot: Option<usize>,
 }
 
 impl InputState {
@@ -40,6 +41,15 @@ impl InputState {
                 }
                 self.jump_held = pressed;
             }
+            KeyCode::Digit1 if pressed => self.select_slot = Some(0),
+            KeyCode::Digit2 if pressed => self.select_slot = Some(1),
+            KeyCode::Digit3 if pressed => self.select_slot = Some(2),
+            KeyCode::Digit4 if pressed => self.select_slot = Some(3),
+            KeyCode::Digit5 if pressed => self.select_slot = Some(4),
+            KeyCode::Digit6 if pressed => self.select_slot = Some(5),
+            KeyCode::Digit7 if pressed => self.select_slot = Some(6),
+            KeyCode::Digit8 if pressed => self.select_slot = Some(7),
+            KeyCode::Digit9 if pressed => self.select_slot = Some(8),
             _ => {}
         }
     }
@@ -62,6 +72,7 @@ impl InputState {
             sprint_held: self.sprint,
             action_primary: self.mouse_primary,
             action_secondary: self.mouse_secondary,
+            select_slot: self.select_slot,
         }
     }
 
@@ -71,6 +82,7 @@ impl InputState {
         self.received_raw_mouse = false;
         self.mouse_primary = false;
         self.mouse_secondary = false;
+        self.select_slot = None;
     }
 
     pub fn clear_focus_state(&mut self) {

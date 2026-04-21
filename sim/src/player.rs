@@ -12,11 +12,36 @@ pub struct PlayerInput {
     pub sprint_held: bool,
     pub action_primary: bool,
     pub action_secondary: bool,
+    pub select_slot: Option<usize>,
 }
 
 impl PlayerInput {
     pub fn move_forward_right(self) -> glam::Vec2 {
         glam::Vec2::new(self.move_forward, self.move_right)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Hotbar {
+    pub slots: [Option<Item>; 9],
+    pub active_slot: usize,
+}
+
+impl Hotbar {
+    pub fn new() -> Self {
+        let mut slots = [None; 9];
+        slots[0] = Some(Item::new(ItemKind::Sword));
+        slots[1] = Some(Item::new(ItemKind::Pickaxe));
+        slots[2] = Some(Item::new(ItemKind::Axe));
+        slots[3] = Some(Item::new(ItemKind::Shovel));
+        Self {
+            slots,
+            active_slot: 0,
+        }
+    }
+
+    pub fn active_item(&self) -> Option<Item> {
+        self.slots[self.active_slot]
     }
 }
 
@@ -54,7 +79,7 @@ pub struct PlayerController {
     pub pitch: f32,
     pub grounded: bool,
     pub collider: Aabb,
-    pub equipped_item: Option<Item>,
+    pub hotbar: Hotbar,
     pub attributes: PlayerAttributes,
 }
 
@@ -70,7 +95,7 @@ impl Default for PlayerController {
             collider: Aabb {
                 half_extents: Vec3::new(0.4, 0.9, 0.4),
             },
-            equipped_item: Some(Item::new(ItemKind::Sword)),
+            hotbar: Hotbar::new(),
             attributes: PlayerAttributes::new(&config),
         }
     }
@@ -79,6 +104,12 @@ impl Default for PlayerController {
 impl PlayerController {
     pub fn tick(&mut self, world: &World, input: PlayerInput, config: &SimulationConfig, dt_seconds: f32) {
         use super::physics::intersects_solid;
+
+        if let Some(slot) = input.select_slot {
+            if slot < 9 {
+                self.hotbar.active_slot = slot;
+            }
+        }
 
         self.yaw += input.look_delta.x;
         self.pitch = (self.pitch - input.look_delta.y).clamp(-1.54, 1.54);
@@ -153,14 +184,14 @@ impl PlayerController {
     }
 
     pub fn attack_damage(&self) -> u8 {
-        match &self.equipped_item {
+        match self.hotbar.active_item() {
             Some(item) => item.kind.damage(),
             None => 1,
         }
     }
 
     pub fn mining_speed(&self, block_id: u8) -> u8 {
-        match &self.equipped_item {
+        match self.hotbar.active_item() {
             Some(item) => item.kind.mining_speed(block_id),
             None => 1,
         }

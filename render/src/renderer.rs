@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 use std::{fmt, mem, sync::Arc, time::Instant};
 use tracing::debug;
 use voxel_core::{
-    ChunkCoord, FrameBudget, FrameMetrics, RenderConfig, WorkPhase,
+    ChunkCoord, FrameBudget, FrameMetrics, ItemKind, RenderConfig, WorkPhase,
 };
 use voxel_world::World;
 use wgpu::util::DeviceExt;
@@ -48,6 +48,10 @@ pub struct Renderer {
     // Text caching
     debug_text_buffer: Option<glyphon::Buffer>,
     last_debug_text: String,
+
+    // Item rendering
+    item_pipeline: wgpu::RenderPipeline,
+    item_meshes: FxHashMap<ItemKind, crate::item_mesh::GpuItemMesh>,
 }
 
 impl fmt::Debug for Renderer {
@@ -315,6 +319,126 @@ impl Renderer {
             TextRenderer::new(&mut text_atlas, &device, wgpu::MultisampleState::default(), None);
         let viewport = Viewport::new(&device, &cache);
 
+        let item_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("item-shader"),
+            source: wgpu::ShaderSource::Wgsl(r#"
+struct CameraUniform {
+    view_projection: mat4x4<f32>,
+};
+@group(0) @binding(0) var<uniform> camera: CameraUniform;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec3<f32>,
+};
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) color: vec3<f32>,
+};
+
+@vertex
+fn vs_main(model: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    // Simple view-space transform for the held item
+    // Fixed in the bottom right, slightly tilted
+    let view_pos = vec4<f32>(model.position.x + 0.45, model.position.y - 0.4, model.position.z - 0.7, 1.0);
+    out.clip_position = vec4<f32>(view_pos.x * 0.7, view_pos.y * 1.2, view_pos.z, 1.0);
+    out.color = model.color;
+    return out;
+}
+
+@fragment
+fn fs_main(@location(0) color: vec3<f32>) -> @location(0) vec4<f32> {
+    return vec4<f32>(color, 1.0);
+}
+"#.into()),
+        });
+
+        let item_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("item-pipeline-layout"),
+            bind_group_layouts: &[&camera_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let item_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("item-pipeline"),
+            layout: Some(&item_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &item_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: mem::size_of::<crate::gpu::GpuVertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            offset: 0,
+                            shader_location: 0,
+                            format: wgpu::VertexFormat::Float32x3,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: mem::size_of::<[f32; 3]>() as u64,
+                            shader_location: 1,
+                            format: wgpu::VertexFormat::Float32x3,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: mem::size_of::<[f32; 3]>() as u64 * 2,
+                            shader_location: 2,
+                            format: wgpu::VertexFormat::Float32x3,
+                        },
+                    ],
+                }],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &item_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let mut item_meshes = FxHashMap::default();
+        let kinds = [
+            ItemKind::Sword,
+            ItemKind::Pickaxe,
+            ItemKind::Axe,
+            ItemKind::Hoe,
+            ItemKind::Shovel,
+        ];
+
+        for kind in kinds {
+            let model = crate::item_model::ItemModel::from_kind(kind);
+            if let Some(gpu_mesh) = crate::item_mesh::GpuItemMesh::from_item_model(&device, &model) {
+                gpu_mesh.upload(&queue, &model);
+                item_meshes.insert(kind, gpu_mesh);
+            }
+        }
+
         Ok(Self {
             surface,
             device,
@@ -338,6 +462,8 @@ impl Renderer {
             cached_gpu_ms: 0.0,
             debug_text_buffer: None,
             last_debug_text: String::new(),
+            item_pipeline,
+            item_meshes,
         })
     }
 
@@ -396,7 +522,7 @@ impl Renderer {
         debug!(cached_meshes = self.chunk_meshes.len(), "renderer world sync complete");
     }
 
-    pub fn render(&mut self, camera: &Camera, debug_text: Option<&str>) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, camera: &Camera, equipped_item: Option<ItemKind>, debug_text: Option<&str>) -> Result<(), wgpu::SurfaceError> {
         let frame = self.surface.get_current_texture()?;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -466,6 +592,17 @@ impl Renderer {
 
             pass.set_pipeline(&self.crosshair_pipeline);
             pass.draw(0..12, 0..1);
+
+            // Render equipped item
+            if let Some(kind) = equipped_item {
+                if let Some(mesh) = self.item_meshes.get(&kind) {
+                    pass.set_pipeline(&self.item_pipeline);
+                    pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                    pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                }
+            }
         }
 
         if let Some(query_set) = &self.query_set {

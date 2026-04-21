@@ -153,16 +153,22 @@ impl Engine {
         self.renderer.sync_world(&mut self.world, &camera, &mut self.metrics);
 
         let attrs = &self.simulation.player.attributes;
+        let active_item_name = self.simulation.player.hotbar.active_item()
+            .map(|i| format!("{:?}", i.kind))
+            .unwrap_or_else(|| "Empty".to_string());
+
         let debug_text = format!(
-            "FPS: {:.1}\nCPU: {:.1}%\nGPU: {:.2}ms\nRAM: {}MB\n\nHEALTH: {:.1}/{:.1}\nSTAMINA: {:.1}/{:.1}\nHUNGER: {:.1}/{:.1}\nLEVEL: {} (EXP: {})",
+            "FPS: {:.1}\nCPU: {:.1}%\nGPU: {:.2}ms\nRAM: {}MB\n\nITEM: {}\nHEALTH: {:.1}/{:.1}\nSTAMINA: {:.1}/{:.1}\nHUNGER: {:.1}/{:.1}\nLEVEL: {} (EXP: {})",
             self.metrics.fps, self.metrics.cpu_usage, self.metrics.gpu_time_ms, self.metrics.ram_usage_mb,
+            active_item_name,
             attrs.health, self.config.simulation.max_health,
             attrs.stamina, self.config.simulation.max_stamina,
             attrs.hunger, self.config.simulation.max_hunger,
             attrs.level, attrs.experience
         );
 
-        self.renderer.render(&camera, Some(&debug_text))
+        let equipped_kind = self.simulation.player.hotbar.active_item().map(|i| i.kind);
+        self.renderer.render(&camera, equipped_kind, Some(&debug_text))
     }
 
     fn handle_interactions(&mut self, input: PlayerInput) {

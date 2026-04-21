@@ -1,5 +1,6 @@
 pub mod camera;
 pub mod gpu;
+pub mod item_mesh;
 pub mod item_model;
 pub mod mesh;
 pub mod renderer;

@@ -26,11 +26,11 @@ impl ItemModel {
             .with_color([0.8, 0.8, 0.9])
             .build(&mut vertices, &mut indices);
 
-        let handle = BoxBuilder::new(Vec3::new(0.3, -0.45, 0.0), Vec3::new(0.04, 0.4, 0.04]))
+        let handle = BoxBuilder::new(Vec3::new(0.3, -0.45, 0.0), Vec3::new(0.04, 0.4, 0.04))
             .with_color([0.55, 0.35, 0.2])
             .build(&mut vertices, &mut indices);
 
-        let pommel = BoxBuilder::new(Vec3::new(0.3, -0.65, 0.0), Vec3::new(0.06, 0.1, 0.06]))
+        let pommel = BoxBuilder::new(Vec3::new(0.3, -0.65, 0.0), Vec3::new(0.06, 0.1, 0.06))
             .with_color([0.7, 0.7, 0.3])
             .build(&mut vertices, &mut indices);
 
@@ -41,11 +41,11 @@ impl ItemModel {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
 
-        let head = BoxBuilder::new(Vec3::new(0.3, 0.25, 0.0), Vec3::new(0.35, 0.08, 0.04]))
+        let head = BoxBuilder::new(Vec3::new(0.3, 0.25, 0.0), Vec3::new(0.35, 0.08, 0.04))
             .with_color([0.7, 0.7, 0.7])
             .build(&mut vertices, &mut indices);
 
-        let handle = BoxBuilder::new(Vec3::new(0.3, -0.2, 0.0), Vec3::new(0.04, 0.5, 0.04]))
+        let handle = BoxBuilder::new(Vec3::new(0.3, -0.2, 0.0), Vec3::new(0.04, 0.5, 0.04))
             .with_color([0.55, 0.35, 0.2])
             .build(&mut vertices, &mut indices);
 
@@ -56,11 +56,11 @@ impl ItemModel {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
 
-        let head = BoxBuilder::new(Vec3::new(0.3, 0.15, 0.0), Vec3::new(0.25, 0.1, 0.04]))
+        let head = BoxBuilder::new(Vec3::new(0.3, 0.15, 0.0), Vec3::new(0.25, 0.1, 0.04))
             .with_color([0.7, 0.7, 0.7])
             .build(&mut vertices, &mut indices);
 
-        let handle = BoxBuilder::new(Vec3::new(0.3, -0.2, 0.0), Vec3::new(0.04, 0.45, 0.04]))
+        let handle = BoxBuilder::new(Vec3::new(0.3, -0.2, 0.0), Vec3::new(0.04, 0.45, 0.04))
             .with_color([0.55, 0.35, 0.2])
             .build(&mut vertices, &mut indices);
 
@@ -71,11 +71,11 @@ impl ItemModel {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
 
-        let head = BoxBuilder::new(Vec3::new(0.3, 0.2, 0.0), Vec3::new(0.25, 0.06, 0.04]))
+        let head = BoxBuilder::new(Vec3::new(0.3, 0.2, 0.0), Vec3::new(0.25, 0.06, 0.04))
             .with_color([0.7, 0.7, 0.7])
             .build(&mut vertices, &mut indices);
 
-        let handle = BoxBuilder::new(Vec3::new(0.3, -0.2, 0.0), Vec3::new(0.04, 0.45, 0.04]))
+        let handle = BoxBuilder::new(Vec3::new(0.3, -0.2, 0.0), Vec3::new(0.04, 0.45, 0.04))
             .with_color([0.55, 0.35, 0.2])
             .build(&mut vertices, &mut indices);
 
@@ -86,11 +86,11 @@ impl ItemModel {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
 
-        let head = BoxBuilder::new(Vec3::new(0.3, 0.25, 0.0), Vec3::new(0.15, 0.2, 0.03]))
+        let head = BoxBuilder::new(Vec3::new(0.3, 0.25, 0.0), Vec3::new(0.15, 0.2, 0.03))
             .with_color([0.75, 0.75, 0.75])
             .build(&mut vertices, &mut indices);
 
-        let handle = BoxBuilder::new(Vec3::new(0.3, -0.2, 0.0), Vec3::new(0.035, 0.45, 0.035]))
+        let handle = BoxBuilder::new(Vec3::new(0.3, -0.2, 0.0), Vec3::new(0.035, 0.45, 0.035))
             .with_color([0.55, 0.35, 0.2])
             .build(&mut vertices, &mut indices);
 
@@ -123,25 +123,25 @@ impl BoxBuilder {
         let he = self.half_extents;
         let c = self.center;
 
-        let mut add_quad = |p1, p2, p3, p4: Vec3, n: Vec3| {
+        let mut add_quad = |p1: [f32; 3], p2: [f32; 3], p3: [f32; 3], p4: [f32; 3], n: Vec3| {
             let v1 = GpuVertex {
                 position: p1,
-                normal: n,
+                normal: n.into(),
                 color: self.color,
             };
             let v2 = GpuVertex {
                 position: p2,
-                normal: n,
+                normal: n.into(),
                 color: self.color,
             };
             let v3 = GpuVertex {
                 position: p3,
-                normal: n,
+                normal: n.into(),
                 color: self.color,
             };
             let v4 = GpuVertex {
                 position: p4,
-                normal: n,
+                normal: n.into(),
                 color: self.color,
             };
             let idx = vertices.len() as u32;
@@ -153,12 +153,12 @@ impl BoxBuilder {
         let py = Vec3::Y * he.y;
         let pz = Vec3::Z * he.z;
 
-        add_quad(c - px - py - pz, c - px + py - pz, c + px + py - pz, c + px - py - pz, -Vec3::Z);
-        add_quad(c + px - py + pz, c + px + py + pz, c - px + py + pz, c - px - py + pz, Vec3::Z);
-        add_quad(c - px - py + pz, c - px + py + pz, c - px + py - pz, c - px - py - pz, -Vec3::X);
-        add_quad(c + px - py - pz, c + px + py - pz, c + px + py + pz, c + px - py + pz, Vec3::X);
-        add_quad(c - px + py - pz, c - px + py + pz, c + px + py + pz, c + px + py - pz, Vec3::Y);
-        add_quad(c - px - py + pz, c - px - py - pz, c + px - py - pz, c + px - py + pz, -Vec3::Y);
+        add_quad((c - px - py - pz).into(), (c - px + py - pz).into(), (c + px + py - pz).into(), (c + px - py - pz).into(), -Vec3::Z);
+        add_quad((c + px - py + pz).into(), (c + px + py + pz).into(), (c - px + py + pz).into(), (c - px - py + pz).into(), Vec3::Z);
+        add_quad((c - px - py + pz).into(), (c - px + py + pz).into(), (c - px + py - pz).into(), (c - px - py - pz).into(), -Vec3::X);
+        add_quad((c + px - py - pz).into(), (c + px + py - pz).into(), (c + px + py + pz).into(), (c + px - py + pz).into(), Vec3::X);
+        add_quad((c - px + py - pz).into(), (c - px + py + pz).into(), (c + px + py + pz).into(), (c + px + py - pz).into(), Vec3::Y);
+        add_quad((c - px - py + pz).into(), (c - px - py - pz).into(), (c + px - py - pz).into(), (c + px - py + pz).into(), -Vec3::Y);
 
         6
     }
