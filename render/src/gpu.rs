@@ -4,7 +4,31 @@ use bytemuck::{Pod, Zeroable};
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct GpuVertex {
     pub position: [f32; 3],
+    pub normal: [f32; 3],
     pub color: [f32; 3],
+}
+
+impl GpuVertex {
+    #[inline]
+    pub fn new(position: [f32; 3], normal: [f32; 3], color: [f32; 3]) -> Self {
+        Self { position, normal, color }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct ModelUniform {
+    pub model: [[f32; 4]; 4],
+    pub color: [[f32; 4]; 4],
+}
+
+impl ModelUniform {
+    pub fn from_transform(matrix: glam::Mat4) -> Self {
+        Self {
+            model: matrix.to_cols_array_2d(),
+            color: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
+        }
+    }
 }
 
 #[repr(C)]
