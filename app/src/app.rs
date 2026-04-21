@@ -87,9 +87,6 @@ impl ApplicationHandler for App {
                             wgpu::SurfaceError::Timeout => {
                                 tracing::warn!("surface timeout");
                             }
-                            wgpu::SurfaceError::Other => {
-                                tracing::warn!("surface returned an unspecified error");
-                            }
                         }
                     }
                 }

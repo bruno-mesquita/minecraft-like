@@ -2,10 +2,16 @@ use crate::camera::Camera;
 use crate::gpu::{create_depth_view, CameraUniform};
 use crate::mesh::{is_chunk_in_view, GpuChunkMesh};
 use crate::types::ChunkMesh;
+use glyphon::{
+    Attrs, Cache, Color, Family, FontSystem, Metrics, Resolution, Shaping, SwashCache, TextArea, TextAtlas,
+    TextRenderer, Viewport,
+};
 use rustc_hash::FxHashMap;
-use std::{mem, sync::Arc, time::Instant};
+use std::{fmt, mem, sync::Arc, time::Instant};
 use tracing::debug;
-use voxel_core::{ChunkCoord, FrameBudget, FrameMetrics, RenderConfig, WorkPhase, CHUNK_HEIGHT, CHUNK_SIZE_X, CHUNK_SIZE_Z};
+use voxel_core::{
+    ChunkCoord, FrameBudget, FrameMetrics, RenderConfig, WorkPhase,
+};
 use voxel_world::World;
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
@@ -13,7 +19,6 @@ use winit::{dpi::PhysicalSize, window::Window};
 const SHADER: &str = include_str!("shader.wgsl");
 const CROSSHAIR_SHADER: &str = include_str!("crosshair.wgsl");
 
-#[derive(Debug)]
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -25,6 +30,28 @@ pub struct Renderer {
     camera_bind_group: wgpu::BindGroup,
     depth_view: wgpu::TextureView,
     chunk_meshes: FxHashMap<ChunkCoord, GpuChunkMesh>,
+
+    // Text rendering
+    font_system: FontSystem,
+    swash_cache: SwashCache,
+    text_atlas: TextAtlas,
+    text_renderer: TextRenderer,
+    viewport: Viewport,
+
+    // GPU Profiling
+    query_set: Option<wgpu::QuerySet>,
+    query_buffer: Option<wgpu::Buffer>,
+    staging_query_buffer: Option<wgpu::Buffer>,
+    timestamp_period: f32,
+}
+
+impl fmt::Debug for Renderer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Renderer")
+            .field("chunk_meshes", &self.chunk_meshes.len())
+            .field("timestamp_period", &self.timestamp_period)
+            .finish()
+    }
 }
 
 impl Renderer {
@@ -42,18 +69,61 @@ impl Renderer {
                 force_fallback_adapter: false,
             })
             .await
-            .map_err(|error| format!("failed to request adapter: {error}"))?;
+            .ok_or_else(|| "failed to request adapter".to_string())?;
+
+        let features = adapter.features();
+        let timestamp_supported = features.contains(wgpu::Features::TIMESTAMP_QUERY);
+        let timestamp_inside_supported = features.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS);
+        
+        let mut required_features = wgpu::Features::empty();
+        if timestamp_supported {
+            required_features |= wgpu::Features::TIMESTAMP_QUERY;
+        }
+        if timestamp_inside_supported {
+            required_features |= wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
+        }
 
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("voxel-device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                memory_hints: wgpu::MemoryHints::Performance,
-                trace: wgpu::Trace::default(),
-            })
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("voxel-device"),
+                    required_features,
+                    required_limits: wgpu::Limits::default(),
+                    memory_hints: wgpu::MemoryHints::Performance,
+                },
+                None,
+            )
             .await
             .map_err(|error| format!("failed to request device: {error}"))?;
+
+        let timestamp_enabled = timestamp_supported && timestamp_inside_supported;
+        let timestamp_period = queue.get_timestamp_period();
+
+        let query_set = timestamp_enabled.then(|| {
+            device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("timestamp-query-set"),
+                ty: wgpu::QueryType::Timestamp,
+                count: 2,
+            })
+        });
+
+        let query_buffer = timestamp_enabled.then(|| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("timestamp-query-buffer"),
+                size: 16, // 2 * 8 bytes
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            })
+        });
+
+        let staging_query_buffer = timestamp_enabled.then(|| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("staging-query-buffer"),
+                size: 16,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        });
 
         let capabilities = surface.get_capabilities(&adapter);
         let format = capabilities
@@ -231,6 +301,15 @@ impl Renderer {
 
         let depth_view = create_depth_view(&device, &config);
 
+        // Glyphon initialization
+        let font_system = FontSystem::new();
+        let swash_cache = SwashCache::new();
+        let cache = Cache::new(&device);
+        let mut text_atlas = TextAtlas::new(&device, &queue, &cache, format);
+        let text_renderer =
+            TextRenderer::new(&mut text_atlas, &device, wgpu::MultisampleState::default(), None);
+        let viewport = Viewport::new(&device, &cache);
+
         Ok(Self {
             surface,
             device,
@@ -242,6 +321,15 @@ impl Renderer {
             camera_bind_group,
             depth_view,
             chunk_meshes: FxHashMap::default(),
+            font_system,
+            swash_cache,
+            text_atlas,
+            text_renderer,
+            viewport,
+            query_set,
+            query_buffer,
+            staging_query_buffer,
+            timestamp_period,
         })
     }
 
@@ -254,6 +342,13 @@ impl Renderer {
         self.config.height = size.height;
         self.surface.configure(&self.device, &self.config);
         self.depth_view = create_depth_view(&self.device, &self.config);
+        self.viewport.update(
+            &self.queue,
+            Resolution {
+                width: self.config.width,
+                height: self.config.height,
+            },
+        );
     }
 
     pub fn surface_size(&self) -> PhysicalSize<u32> {
@@ -304,7 +399,7 @@ impl Renderer {
         debug!(cached_meshes = self.chunk_meshes.len(), "renderer world sync complete");
     }
 
-    pub fn render(&mut self, camera: &Camera) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, camera: &Camera, debug_text: Option<&str>) -> Result<(), wgpu::SurfaceError> {
         let frame = self.surface.get_current_texture()?;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -319,6 +414,10 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("voxel-render-encoder"),
             });
+
+        if let Some(query_set) = &self.query_set {
+            encoder.write_timestamp(query_set, 0);
+        }
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -361,9 +460,98 @@ impl Renderer {
             pass.draw(0..12, 0..1);
         }
 
+        if let Some(query_set) = &self.query_set {
+            encoder.write_timestamp(query_set, 1);
+        }
+
+        if let (Some(query_set), Some(query_buffer)) = (&self.query_set, &self.query_buffer) {
+            encoder.resolve_query_set(query_set, 0..2, query_buffer, 0);
+            if let Some(staging) = &self.staging_query_buffer {
+                encoder.copy_buffer_to_buffer(query_buffer, 0, staging, 0, 16);
+            }
+        }
+
+        if let Some(text) = debug_text {
+            let text_renderer = &mut self.text_renderer;
+            let font_system = &mut self.font_system;
+            let atlas = &mut self.text_atlas;
+
+            let mut buffer = glyphon::Buffer::new(font_system, Metrics::new(20.0, 25.0));
+            buffer.set_size(font_system, Some(self.config.width as f32), Some(self.config.height as f32));
+            buffer.set_text(font_system, text, Attrs::new().family(Family::Monospace), Shaping::Advanced);
+            buffer.shape_until_scroll(font_system, false);
+
+            text_renderer
+                .prepare(
+                    &self.device,
+                    &self.queue,
+                    font_system,
+                    atlas,
+                    &self.viewport,
+                    [TextArea {
+                        buffer: &buffer,
+                        left: 10.0,
+                        top: 10.0,
+                        scale: 1.0,
+                        bounds: glyphon::TextBounds {
+                            left: 0,
+                            top: 0,
+                            right: self.config.width as i32,
+                            bottom: self.config.height as i32,
+                        },
+                        default_color: Color::rgb(255, 255, 255),
+                        custom_glyphs: &[],
+                    }],
+                    &mut self.swash_cache,
+                )
+                .unwrap();
+
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("text-render-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
+                text_renderer.render(atlas, &self.viewport, &mut pass).unwrap();
+            }
+        }
+
         self.queue.submit(Some(encoder.finish()));
         frame.present();
         Ok(())
+    }
+
+    pub fn retrieve_gpu_time(&self) -> f32 {
+        let Some(buffer) = &self.staging_query_buffer else {
+            return 0.0;
+        };
+
+        let slice = buffer.slice(..);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+
+        self.device.poll(wgpu::Maintain::Wait);
+
+        if let Ok(Ok(())) = receiver.recv() {
+            let data = slice.get_mapped_range();
+            let timestamps: &[u64] = bytemuck::cast_slice(&data);
+            let diff = timestamps[1].wrapping_sub(timestamps[0]);
+            drop(data);
+            buffer.unmap();
+            (diff as f32 * self.timestamp_period) / 1_000_000.0
+        } else {
+            0.0
+        }
     }
 
     pub fn uploaded_meshes(&self) -> usize {

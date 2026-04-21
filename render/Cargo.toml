@@ -14,3 +14,4 @@ voxel-core = { path = "../core" }
 voxel-world = { path = "../world" }
 wgpu.workspace = true
 winit.workspace = true
+glyphon.workspace = true

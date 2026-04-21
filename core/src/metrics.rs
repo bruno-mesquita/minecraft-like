@@ -27,6 +27,10 @@ pub struct FrameMetrics {
     pub save_time: Duration,
     pub load_time: Duration,
     pub counters: WorldCounters,
+    pub fps: f32,
+    pub cpu_usage: f32,
+    pub ram_usage_mb: u64,
+    pub gpu_time_ms: f32,
 }
 
 impl Default for FrameMetrics {
@@ -38,6 +42,10 @@ impl Default for FrameMetrics {
             save_time: Duration::ZERO,
             load_time: Duration::ZERO,
             counters: WorldCounters::default(),
+            fps: 0.0,
+            cpu_usage: 0.0,
+            ram_usage_mb: 0,
+            gpu_time_ms: 0.0,
         }
     }
 }

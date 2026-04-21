@@ -1,6 +1,7 @@
-use std::{sync::Arc, time::Instant};
+use std::{sync::Arc, time::{Duration, Instant}};
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use tracing::info;
-use voxel_core::{BlockCoord, ChunkCoord, EngineConfig, FrameMetrics, RenderConfig, SimulationConfig};
+use voxel_core::{BlockCoord, ChunkCoord, EngineConfig, FrameMetrics};
 use voxel_render::Renderer;
 use voxel_sim::{PlayerController, PlayerInput, Simulation};
 use voxel_world::World;
@@ -16,6 +17,13 @@ pub struct Engine {
     metrics: FrameMetrics,
     last_frame_at: Instant,
     accumulator: f32,
+
+    // Metrics tracking
+    sys: System,
+    last_metrics_update: Instant,
+    current_fps: f32,
+    frame_count: usize,
+    frame_timer: Instant,
 }
 
 impl Engine {
@@ -28,6 +36,12 @@ impl Engine {
             "saves/default",
         );
 
+        let sys = System::new_with_specifics(
+            RefreshKind::nothing()
+                .with_cpu(CpuRefreshKind::everything())
+                .with_memory(MemoryRefreshKind::everything()),
+        );
+
         Ok(Self {
             config,
             renderer,
@@ -36,6 +50,11 @@ impl Engine {
             metrics: FrameMetrics::default(),
             last_frame_at: Instant::now(),
             accumulator: 0.0,
+            sys,
+            last_metrics_update: Instant::now(),
+            current_fps: 0.0,
+            frame_count: 0,
+            frame_timer: Instant::now(),
         })
     }
 
@@ -74,6 +93,25 @@ impl Engine {
         self.last_frame_at = now;
         self.accumulator += frame_delta;
 
+        // Metrics calculation
+        self.frame_count += 1;
+        let elapsed_since_fps = now.duration_since(self.frame_timer);
+        if elapsed_since_fps >= Duration::from_secs(1) {
+            self.current_fps = self.frame_count as f32 / elapsed_since_fps.as_secs_f32();
+            self.frame_count = 0;
+            self.frame_timer = now;
+        }
+
+        if now.duration_since(self.last_metrics_update) >= Duration::from_millis(500) {
+            self.sys.refresh_cpu_all();
+            self.sys.refresh_memory();
+            self.metrics.cpu_usage = self.sys.global_cpu_usage();
+            self.metrics.ram_usage_mb = self.sys.used_memory() / 1024 / 1024;
+            self.metrics.gpu_time_ms = self.renderer.retrieve_gpu_time();
+            self.last_metrics_update = now;
+        }
+        self.metrics.fps = self.current_fps;
+
         let fixed_dt = self.config.simulation.fixed_dt_seconds;
         let mut steps = 0;
         let mut frame_input = input.to_player_input(self.config.render.mouse_sensitivity);
@@ -106,7 +144,13 @@ impl Engine {
 
         let camera = self.current_camera();
         self.renderer.sync_world(&mut self.world, &camera, &mut self.metrics);
-        self.renderer.render(&camera)
+
+        let debug_text = format!(
+            "FPS: {:.1}\nCPU: {:.1}%\nGPU: {:.2}ms\nRAM: {}MB",
+            self.metrics.fps, self.metrics.cpu_usage, self.metrics.gpu_time_ms, self.metrics.ram_usage_mb
+        );
+
+        self.renderer.render(&camera, Some(&debug_text))
     }
 
     fn handle_interactions(&mut self, input: PlayerInput) {
