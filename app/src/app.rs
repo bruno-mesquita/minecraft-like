@@ -2,7 +2,6 @@ use std::sync::Arc;
 use voxel_core::EngineConfig;
 use winit::{
     application::ApplicationHandler,
-    dpi::PhysicalPosition,
     event::{DeviceEvent, ElementState, WindowEvent},
     event_loop::ActiveEventLoop,
     keyboard::KeyCode,
@@ -97,11 +96,6 @@ impl ApplicationHandler for App {
                     engine.resize(size);
                 }
             }
-            WindowEvent::CursorEntered { .. } => {
-                if !self.input.cursor_captured {
-                    self.input.cursor_captured = super::input::capture_cursor(window, true);
-                }
-            }
             WindowEvent::MouseInput { button, state, .. } => {
                 if !self.input.cursor_captured {
                     self.input.cursor_captured = super::input::capture_cursor(window, true);
@@ -110,7 +104,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                self.input.handle_cursor_moved(window, position);
+                self.input.handle_cursor_moved(Some(window), position);
             }
             WindowEvent::Focused(false) => {
                 self.input.clear_focus_state();

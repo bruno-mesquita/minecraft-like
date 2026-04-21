@@ -89,21 +89,25 @@ impl InputState {
         self.received_raw_mouse = false;
     }
 
-    pub fn handle_cursor_moved(&mut self, window: &Window, position: PhysicalPosition<f64>) {
+    pub fn handle_cursor_moved(&mut self, window: Option<&Window>, position: PhysicalPosition<f64>) {
         let previous = self.last_cursor_position.replace(position);
         if !self.cursor_captured {
             return;
         }
 
-        // Always try to keep it centered to prevent escaping the window
-        let size = window.inner_size();
-        let center = PhysicalPosition::new(
-            f64::from(size.width.max(1)) / 2.0,
-            f64::from(size.height.max(1)) / 2.0,
-        );
+        if let Some(window) = window {
+            // Always try to keep it centered to prevent escaping the window
+            let size = window.inner_size();
+            let center = PhysicalPosition::new(
+                f64::from(size.width.max(1)) / 2.0,
+                f64::from(size.height.max(1)) / 2.0,
+            );
 
-        if (position.x - center.x).abs() > 10.0 || (position.y - center.y).abs() > 10.0 {
-            let _ = window.set_cursor_position(center);
+            if (position.x - center.x).abs() > 10.0 || (position.y - center.y).abs() > 10.0 {
+                if window.set_cursor_position(center).is_ok() {
+                    self.last_cursor_position = Some(center);
+                }
+            }
         }
 
         if self.received_raw_mouse {
@@ -140,11 +144,10 @@ pub fn capture_cursor(window: &Window, capture: bool) -> bool {
                     .map(|_| CursorGrabMode::Confined)
             });
 
-        use winit::dpi::LogicalPosition;
         match grab_mode {
             Ok(mode) => {
                 let size = window.inner_size();
-                let center = LogicalPosition::new(
+                let center = PhysicalPosition::new(
                     f64::from(size.width.max(1)) / 2.0,
                     f64::from(size.height.max(1)) / 2.0,
                 );
@@ -198,6 +201,8 @@ mod tests {
             sprint: true,
             jump_held: true,
             jump_pressed: true,
+            mouse_primary: false,
+            mouse_secondary: false,
             mouse_delta: Vec2::new(3.0, -2.0),
             cursor_captured: true,
             last_cursor_position: Some(PhysicalPosition::new(10.0, 12.0)),
@@ -224,15 +229,15 @@ mod tests {
             ..InputState::default()
         };
 
-        input.handle_cursor_moved(PhysicalPosition::new(100.0, 100.0));
+        input.handle_cursor_moved(None, PhysicalPosition::new(100.0, 100.0));
         assert_eq!(input.mouse_delta, Vec2::ZERO);
 
-        input.handle_cursor_moved(PhysicalPosition::new(112.0, 94.0));
+        input.handle_cursor_moved(None, PhysicalPosition::new(112.0, 94.0));
         assert_eq!(input.mouse_delta, Vec2::new(12.0, -6.0));
 
         input.clear_focus_state();
         input.cursor_captured = true;
-        input.handle_cursor_moved(PhysicalPosition::new(90.0, 90.0));
+        input.handle_cursor_moved(None, PhysicalPosition::new(90.0, 90.0));
         assert_eq!(input.mouse_delta, Vec2::ZERO);
     }
 }
