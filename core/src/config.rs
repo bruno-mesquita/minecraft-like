@@ -96,6 +96,11 @@ pub struct SimulationConfig {
     pub gravity: f32,
     pub eye_height: f32,
     pub fixed_dt_seconds: f32,
+    pub max_health: f32,
+    pub max_stamina: f32,
+    pub max_hunger: f32,
+    pub stamina_regen_rate: f32,
+    pub hunger_decay_rate: f32,
 }
 
 impl Default for SimulationConfig {
@@ -107,6 +112,11 @@ impl Default for SimulationConfig {
             gravity: 24.0,
             eye_height: 0.6,
             fixed_dt_seconds: 1.0 / 120.0,
+            max_health: 20.0,
+            max_stamina: 100.0,
+            max_hunger: 20.0,
+            stamina_regen_rate: 10.0,
+            hunger_decay_rate: 0.05,
         }
     }
 }

@@ -1,6 +1,6 @@
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
-use voxel_core::{BlockCoord, CameraTransform, SimulationConfig};
+use voxel_core::{CameraTransform, Item, ItemKind, SimulationConfig};
 use voxel_world::World;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -26,6 +26,27 @@ pub struct Aabb {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct PlayerAttributes {
+    pub health: f32,
+    pub stamina: f32,
+    pub hunger: f32,
+    pub experience: u32,
+    pub level: u32,
+}
+
+impl PlayerAttributes {
+    pub fn new(config: &voxel_core::SimulationConfig) -> Self {
+        Self {
+            health: config.max_health,
+            stamina: config.max_stamina,
+            hunger: config.max_hunger,
+            experience: 0,
+            level: 1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct PlayerController {
     pub position: Vec3,
     pub velocity: Vec3,
@@ -33,10 +54,13 @@ pub struct PlayerController {
     pub pitch: f32,
     pub grounded: bool,
     pub collider: Aabb,
+    pub equipped_item: Option<Item>,
+    pub attributes: PlayerAttributes,
 }
 
 impl Default for PlayerController {
     fn default() -> Self {
+        let config = voxel_core::SimulationConfig::default();
         Self {
             position: Vec3::new(0.0, 90.0, 0.0),
             velocity: Vec3::ZERO,
@@ -46,6 +70,8 @@ impl Default for PlayerController {
             collider: Aabb {
                 half_extents: Vec3::new(0.4, 0.9, 0.4),
             },
+            equipped_item: Some(Item::new(ItemKind::Sword)),
+            attributes: PlayerAttributes::new(&config),
         }
     }
 }
@@ -63,11 +89,23 @@ impl PlayerController {
         }
 
         let movement = input.move_forward_right();
-        let speed = if input.sprint_held {
+        let is_moving = movement.length_squared() > 0.0;
+        let is_sprinting = input.sprint_held && is_moving && self.attributes.stamina > 0.0;
+
+        let speed = if is_sprinting {
             config.walk_speed * config.sprint_multiplier
         } else {
             config.walk_speed
         };
+
+        // Update attributes
+        if is_sprinting {
+            self.attributes.stamina = (self.attributes.stamina - 20.0 * dt_seconds).max(0.0);
+        } else {
+            self.attributes.stamina = (self.attributes.stamina + config.stamina_regen_rate * dt_seconds).min(config.max_stamina);
+        }
+
+        self.attributes.hunger = (self.attributes.hunger - config.hunger_decay_rate * dt_seconds).max(0.0);
 
         let forward = self.forward_vector();
         let planar_forward = Vec3::new(forward.x, 0.0, forward.z).normalize_or_zero();
@@ -105,5 +143,19 @@ impl PlayerController {
             -self.yaw.cos() * self.pitch.cos(),
         )
         .normalize_or_zero()
+    }
+
+    pub fn attack_damage(&self) -> u8 {
+        match &self.equipped_item {
+            Some(item) => item.kind.damage(),
+            None => 1,
+        }
+    }
+
+    pub fn mining_speed(&self, block_id: u8) -> u8 {
+        match &self.equipped_item {
+            Some(item) => item.kind.mining_speed(block_id),
+            None => 1,
+        }
     }
 }
