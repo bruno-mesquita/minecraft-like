@@ -101,6 +101,8 @@ pub struct SimulationConfig {
     pub max_hunger: f32,
     pub stamina_regen_rate: f32,
     pub hunger_decay_rate: f32,
+    pub health_regen_rate: f32,
+    pub starvation_damage_rate: f32,
 }
 
 impl Default for SimulationConfig {
@@ -117,6 +119,8 @@ impl Default for SimulationConfig {
             max_hunger: 20.0,
             stamina_regen_rate: 10.0,
             hunger_decay_rate: 0.05,
+            health_regen_rate: 1.0,
+            starvation_damage_rate: 1.0,
         }
     }
 }

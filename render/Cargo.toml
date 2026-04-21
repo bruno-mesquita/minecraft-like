@@ -15,3 +15,6 @@ voxel-world = { path = "../world" }
 wgpu.workspace = true
 winit.workspace = true
 glyphon.workspace = true
+
+[dev-dependencies]
+ tempfile.workspace = true

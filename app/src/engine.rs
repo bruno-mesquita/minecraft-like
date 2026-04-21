@@ -131,6 +131,12 @@ impl Engine {
             frame_input.action_secondary = false;
         }
 
+        // Handle death
+        if self.simulation.player.attributes.health <= 0.0 {
+            info!("Player died! Respawning...");
+            self.simulation.player.respawn(&self.config.simulation);
+        }
+
         self.tick_world();
 
         if self.accumulator >= fixed_dt {
@@ -146,9 +152,14 @@ impl Engine {
         let camera = self.current_camera();
         self.renderer.sync_world(&mut self.world, &camera, &mut self.metrics);
 
+        let attrs = &self.simulation.player.attributes;
         let debug_text = format!(
-            "FPS: {:.1}\nCPU: {:.1}%\nGPU: {:.2}ms\nRAM: {}MB",
-            self.metrics.fps, self.metrics.cpu_usage, self.metrics.gpu_time_ms, self.metrics.ram_usage_mb
+            "FPS: {:.1}\nCPU: {:.1}%\nGPU: {:.2}ms\nRAM: {}MB\n\nHEALTH: {:.1}/{:.1}\nSTAMINA: {:.1}/{:.1}\nHUNGER: {:.1}/{:.1}\nLEVEL: {} (EXP: {})",
+            self.metrics.fps, self.metrics.cpu_usage, self.metrics.gpu_time_ms, self.metrics.ram_usage_mb,
+            attrs.health, self.config.simulation.max_health,
+            attrs.stamina, self.config.simulation.max_stamina,
+            attrs.hunger, self.config.simulation.max_hunger,
+            attrs.level, attrs.experience
         );
 
         self.renderer.render(&camera, Some(&debug_text))

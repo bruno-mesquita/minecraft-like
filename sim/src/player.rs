@@ -107,6 +107,13 @@ impl PlayerController {
 
         self.attributes.hunger = (self.attributes.hunger - config.hunger_decay_rate * dt_seconds).max(0.0);
 
+        // Starvation and Healing
+        if self.attributes.hunger <= 0.0 {
+            self.attributes.health = (self.attributes.health - config.starvation_damage_rate * dt_seconds).max(0.0);
+        } else if self.attributes.hunger >= config.max_hunger * 0.9 && self.attributes.health < config.max_health {
+            self.attributes.health = (self.attributes.health + config.health_regen_rate * dt_seconds).min(config.max_health);
+        }
+
         let forward = self.forward_vector();
         let planar_forward = Vec3::new(forward.x, 0.0, forward.z).normalize_or_zero();
         let right = planar_forward.cross(Vec3::Y).normalize_or_zero();
@@ -157,5 +164,15 @@ impl PlayerController {
             Some(item) => item.kind.mining_speed(block_id),
             None => 1,
         }
+    }
+
+    pub fn take_damage(&mut self, amount: f32) {
+        self.attributes.health = (self.attributes.health - amount).max(0.0);
+    }
+
+    pub fn respawn(&mut self, config: &SimulationConfig) {
+        self.position = Vec3::new(0.0, 90.0, 0.0); // Reset to default spawn
+        self.velocity = Vec3::ZERO;
+        self.attributes = PlayerAttributes::new(config);
     }
 }
