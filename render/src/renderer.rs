@@ -43,6 +43,11 @@ pub struct Renderer {
     query_buffer: Option<wgpu::Buffer>,
     staging_query_buffer: Option<wgpu::Buffer>,
     timestamp_period: f32,
+    cached_gpu_ms: f32,
+
+    // Text caching
+    debug_text_buffer: Option<glyphon::Buffer>,
+    last_debug_text: String,
 }
 
 impl fmt::Debug for Renderer {
@@ -330,6 +335,9 @@ impl Renderer {
             query_buffer,
             staging_query_buffer,
             timestamp_period,
+            cached_gpu_ms: 0.0,
+            debug_text_buffer: None,
+            last_debug_text: String::new(),
         })
     }
 
@@ -355,35 +363,24 @@ impl Renderer {
         PhysicalSize::new(self.config.width, self.config.height)
     }
 
-    pub fn sync_world(&mut self, world: &mut World, camera: &Camera, metrics: &mut FrameMetrics) {
-        self.chunk_meshes
-            .retain(|coord, _| world.loaded_chunk(*coord).is_some() && is_chunk_in_view(camera, *coord));
+    pub fn sync_world(&mut self, world: &mut World, _camera: &Camera, metrics: &mut FrameMetrics) {
+        // Retain meshes as long as the chunk is loaded in the world.
+        // This prevents thrashing GPU memory when rotating the camera.
+        self.chunk_meshes.retain(|coord, _| world.loaded_chunk(*coord).is_some());
 
         let mut budget = FrameBudget::new(world.streaming.max_mesh_jobs_per_frame);
-        let mut to_upload = Vec::new();
 
-        for (coord, chunk) in world.loaded_chunks_iter() {
-            if !is_chunk_in_view(camera, *coord) {
-                continue;
-            }
-
-            let is_meshing = world.manager.state(*coord) == Some(voxel_world::ChunkState::Meshing);
-            let not_in_gpu = !self.chunk_meshes.contains_key(coord);
-
-            if !is_meshing && !not_in_gpu {
-                continue;
-            }
-
-            if !budget.try_take(1) {
+        while budget.try_take(1) {
+            let Some(coord) = world.manager.pop_pending_mesh() else {
                 break;
-            }
+            };
 
-            to_upload.push((*coord, chunk.clone()));
-        }
+            let Some(_chunk) = world.loaded_chunk(coord) else {
+                continue;
+            };
 
-        for (coord, chunk) in to_upload {
             let mesh_started = Instant::now();
-            let mesh = ChunkMesh::build(&chunk);
+            let mesh = ChunkMesh::build(world, coord);
             metrics.record_phase(WorkPhase::Mesh, mesh_started.elapsed());
 
             let upload_started = Instant::now();
@@ -450,7 +447,18 @@ impl Renderer {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
 
-            for mesh in self.chunk_meshes.values() {
+            let mut sorted_chunks: Vec<_> = self.chunk_meshes.iter().collect();
+            sorted_chunks.sort_unstable_by_key(|(coord, _)| {
+                let center = coord.world_origin();
+                let dx = center.x as f32 + 16.0 - camera.transform.position.x;
+                let dz = center.z as f32 + 16.0 - camera.transform.position.z;
+                (dx * dx + dz * dz) as i32
+            });
+
+            for (coord, mesh) in sorted_chunks {
+                if !is_chunk_in_view(camera, *coord) {
+                    continue;
+                }
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -472,14 +480,30 @@ impl Renderer {
         }
 
         if let Some(text) = debug_text {
+            if self.debug_text_buffer.is_none() || self.last_debug_text != text {
+                let mut buffer = self.debug_text_buffer.take().unwrap_or_else(|| {
+                    glyphon::Buffer::new(&mut self.font_system, Metrics::new(20.0, 25.0))
+                });
+                buffer.set_size(
+                    &mut self.font_system,
+                    Some(self.config.width as f32),
+                    Some(self.config.height as f32),
+                );
+                buffer.set_text(
+                    &mut self.font_system,
+                    text,
+                    Attrs::new().family(Family::Monospace),
+                    Shaping::Advanced,
+                );
+                buffer.shape_until_scroll(&mut self.font_system, false);
+                self.debug_text_buffer = Some(buffer);
+                self.last_debug_text = text.to_string();
+            }
+
+            let buffer = self.debug_text_buffer.as_ref().unwrap();
             let text_renderer = &mut self.text_renderer;
             let font_system = &mut self.font_system;
             let atlas = &mut self.text_atlas;
-
-            let mut buffer = glyphon::Buffer::new(font_system, Metrics::new(20.0, 25.0));
-            buffer.set_size(font_system, Some(self.config.width as f32), Some(self.config.height as f32));
-            buffer.set_text(font_system, text, Attrs::new().family(Family::Monospace), Shaping::Advanced);
-            buffer.shape_until_scroll(font_system, false);
 
             text_renderer
                 .prepare(
@@ -489,7 +513,7 @@ impl Renderer {
                     atlas,
                     &self.viewport,
                     [TextArea {
-                        buffer: &buffer,
+                        buffer,
                         left: 10.0,
                         top: 10.0,
                         scale: 1.0,
@@ -531,7 +555,7 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn retrieve_gpu_time(&self) -> f32 {
+    pub fn retrieve_gpu_time(&mut self) -> f32 {
         let Some(buffer) = &self.staging_query_buffer else {
             return 0.0;
         };
@@ -540,18 +564,19 @@ impl Renderer {
         let (sender, receiver) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
-        self.device.poll(wgpu::Maintain::Wait);
+        // Use non-blocking poll. If it's not ready, we'll return the cached value.
+        self.device.poll(wgpu::Maintain::Poll);
 
-        if let Ok(Ok(())) = receiver.recv() {
+        if let Ok(Ok(())) = receiver.try_recv() {
             let data = slice.get_mapped_range();
             let timestamps: &[u64] = bytemuck::cast_slice(&data);
             let diff = timestamps[1].wrapping_sub(timestamps[0]);
             drop(data);
             buffer.unmap();
-            (diff as f32 * self.timestamp_period) / 1_000_000.0
-        } else {
-            0.0
+            self.cached_gpu_ms = (diff as f32 * self.timestamp_period) / 1_000_000.0;
         }
+
+        self.cached_gpu_ms
     }
 
     pub fn uploaded_meshes(&self) -> usize {

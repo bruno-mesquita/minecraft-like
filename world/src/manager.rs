@@ -6,7 +6,6 @@ use crate::visibility::nearest_visible_coords;
 use crate::voxel::AIR;
 use rustc_hash::FxHashMap;
 use std::{collections::VecDeque, io, time::Instant};
-use tracing::debug;
 use voxel_core::{
     BlockCoord, ChunkCoord, FrameBudget, FrameMetrics, StreamingConfig, WorkPhase, WorldConfig,
     WorldCounters,
@@ -16,10 +15,11 @@ use voxel_core::{
 pub struct World {
     pub config: WorldConfig,
     pub streaming: StreamingConfig,
-    generator: TerrainGenerator,
+    pub generator: TerrainGenerator,
     pub store: RegionStore,
     pub manager: ChunkManager,
     loaded_chunks: FxHashMap<ChunkCoord, Chunk>,
+    pub modified_blocks: FxHashMap<BlockCoord, crate::voxel::BlockId>,
 }
 
 impl World {
@@ -34,6 +34,7 @@ impl World {
             store: RegionStore::new(save_root),
             manager: ChunkManager::new(),
             loaded_chunks: FxHashMap::default(),
+            modified_blocks: FxHashMap::default(),
             config,
             streaming,
         }
@@ -55,23 +56,11 @@ impl World {
 
             self.manager.mark_generating(coord);
             let started = Instant::now();
-            let chunk = match self.store.load_chunk(coord) {
-                Ok(Some(chunk)) => {
-                    metrics.record_phase(WorkPhase::Load, started.elapsed());
-                    chunk
-                }
-                Ok(None) => {
-                    let generated = self.generator.generate_chunk(coord);
-                    metrics.record_phase(WorkPhase::Generate, started.elapsed());
-                    generated
-                }
-                Err(error) => {
-                    debug!(?coord, %error, "failed to load chunk from disk, regenerating");
-                    let generated = self.generator.generate_chunk(coord);
-                    metrics.record_phase(WorkPhase::Generate, started.elapsed());
-                    generated
-                }
-            };
+            
+            // In the new architecture, we don't load dense chunks from disk for now.
+            // We just "generate" the metadata shell.
+            let chunk = self.generator.generate_chunk(coord);
+            metrics.record_phase(WorkPhase::Generate, started.elapsed());
 
             self.loaded_chunks.insert(coord, chunk);
             self.manager.mark_meshing(coord);
@@ -124,25 +113,20 @@ impl World {
             return;
         }
 
-        let chunk_coord = ChunkCoord::from_block(coord);
-        let Some(chunk) = self.loaded_chunks.get_mut(&chunk_coord) else {
-            return;
-        };
-
-        let origin = chunk_coord.world_origin();
-        let lx = coord.x - origin.x;
-        let ly = coord.y;
-        let lz = coord.z - origin.z;
-
-        if chunk.storage.get(lx, ly, lz) == block_id {
+        if self.sample_block(coord).id == block_id {
             return;
         }
 
-        chunk.storage.set(lx, ly, lz, block_id);
-        chunk.dirty = true;
+        self.modified_blocks.insert(coord, block_id);
+        
+        let chunk_coord = ChunkCoord::from_block(coord);
         self.manager.mark_meshing(chunk_coord);
 
         // Dirty neighbors if on boundary
+        let origin = chunk_coord.world_origin();
+        let lx = coord.x - origin.x;
+        let lz = coord.z - origin.z;
+
         if lx == 0 {
             self.dirty_chunk(ChunkCoord::new(chunk_coord.x - 1, chunk_coord.z));
         }
@@ -159,8 +143,6 @@ impl World {
 
     fn dirty_chunk(&mut self, coord: ChunkCoord) {
         if self.loaded_chunks.contains_key(&coord) {
-            // We don't set chunk.dirty = true here because voxel data didn't change (no need to save to disk)
-            // but we do need to remesh it.
             self.manager.mark_meshing(coord);
         }
     }
@@ -170,12 +152,11 @@ impl World {
             return crate::voxel::Voxel::new(AIR);
         }
 
-        let chunk_coord = ChunkCoord::from_block(block);
-        let Some(chunk) = self.loaded_chunks.get(&chunk_coord) else {
-            return crate::voxel::Voxel::new(AIR);
-        };
+        if let Some(&id) = self.modified_blocks.get(&block) {
+            return crate::voxel::Voxel::new(id);
+        }
 
-        chunk.voxel_at_world(block)
+        crate::voxel::Voxel::new(self.generator.block_at(block))
     }
 
     pub fn loaded_chunk(&self, coord: ChunkCoord) -> Option<&Chunk> {
@@ -190,22 +171,10 @@ impl World {
         self.loaded_chunks.iter()
     }
 
-    pub fn save_dirty_chunks(&mut self, metrics: &mut FrameMetrics) -> io::Result<usize> {
-        let started = Instant::now();
-        let mut saved = 0;
-
-        for chunk in self.loaded_chunks.values_mut() {
-            if !chunk.dirty {
-                continue;
-            }
-
-            self.store.save_chunk(chunk)?;
-            chunk.dirty = false;
-            saved += 1;
-        }
-
-        metrics.record_phase(WorkPhase::Save, started.elapsed());
-        Ok(saved)
+    pub fn save_dirty_chunks(&mut self, _metrics: &mut FrameMetrics) -> io::Result<usize> {
+        // Saving logic needs to be updated for the new architecture (saving modified_blocks)
+        // For now, we skip it.
+        Ok(0)
     }
 }
 
@@ -253,6 +222,10 @@ impl ChunkManager {
 
     pub fn pop_requested(&mut self) -> Option<ChunkCoord> {
         self.requested.pop_front()
+    }
+
+    pub fn pop_pending_mesh(&mut self) -> Option<ChunkCoord> {
+        self.pending_mesh.pop_front()
     }
 
     pub fn counters(&self) -> WorldCounters {

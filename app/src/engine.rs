@@ -122,7 +122,6 @@ impl Engine {
         while self.accumulator >= fixed_dt && steps < MAX_SIMULATION_STEPS_PER_FRAME {
             self.simulation
                 .tick(&self.world, frame_input, &self.config.simulation, fixed_dt);
-            self.tick_world();
             self.accumulator -= fixed_dt;
             steps += 1;
             frame_input.look_delta = glam::Vec2::ZERO;
@@ -131,6 +130,8 @@ impl Engine {
             frame_input.action_primary = false;
             frame_input.action_secondary = false;
         }
+
+        self.tick_world();
 
         if self.accumulator >= fixed_dt {
             tracing::warn!(

@@ -50,11 +50,11 @@ pub struct StreamingConfig {
 impl Default for StreamingConfig {
     fn default() -> Self {
         Self {
-            load_radius: 3,
-            keep_radius: 4,
-            max_active_chunks: 16,
+            load_radius: 5,
+            keep_radius: 7,
+            max_active_chunks: 128,
             max_generation_jobs_per_frame: 4,
-            max_mesh_jobs_per_frame: 3,
+            max_mesh_jobs_per_frame: 4,
         }
     }
 }
@@ -83,7 +83,7 @@ impl Default for RenderConfig {
             mouse_sensitivity: 0.0025,
             max_frames_in_flight: 2,
             occlusion_culling: false,
-            vsync: true,
+            vsync: false,
         }
     }
 }

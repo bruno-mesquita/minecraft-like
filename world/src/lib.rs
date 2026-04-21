@@ -6,7 +6,7 @@ mod state;
 mod visibility;
 mod voxel;
 
-pub use chunk::{Chunk, ChunkStorage};
+pub use chunk::Chunk;
 pub use generator::TerrainGenerator;
 pub use manager::{ChunkManager, World};
 pub use region::{RegionChunkData, RegionStore};
